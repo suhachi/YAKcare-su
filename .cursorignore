@@ -1,0 +1,4 @@
+.env.local
+# allow template for review
+!.env.example
+
