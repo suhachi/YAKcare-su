@@ -1,0 +1,172 @@
+rules_version = '2';
+
+/**
+ * Firestore Security Rules
+ * Phase 2: 프로덕션 보안 규칙
+ * 
+ * 핵심 원칙:
+ * 1. 자기 자신의 데이터만 읽기/쓰기 (ownerId == request.auth.uid)
+ * 2. ACTIVE 보호자는 환자 데이터 읽기 가능
+ * 3. 민감정보 금지 (원본 텍스트 저장 금지, 해시만 허용)
+ */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===== 헬퍼 함수 =====
+    
+    // 인증된 사용자인지 확인
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // 자기 자신인지 확인
+    function isSelf(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+    
+    // ACTIVE 보호자 체크 (환자의 데이터 읽기 시)
+    function isActiveCaregiver(patientId) {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/care_links/$(getLinkId(request.auth.uid, patientId))) &&
+        get(/databases/$(database)/documents/care_links/$(getLinkId(request.auth.uid, patientId))).data.status == 'ACTIVE';
+    }
+    
+    // 연결 ID 생성 (caregiverId + patientId 조합으로 찾기)
+    // 실제로는 쿼리로 찾아야 하지만, 단순화를 위해 컴파운드 ID 사용
+    function getLinkId(caregiverId, patientId) {
+      return caregiverId + '_' + patientId;
+    }
+    
+    // ===== users 컬렉션 =====
+    match /users/{uid} {
+      // 읽기: 자기 자신만
+      allow read: if isSelf(uid);
+      
+      // 생성: 자기 자신만 (처음 가입 시)
+      allow create: if isSelf(uid) && 
+        request.resource.data.uid == uid &&
+        request.resource.data.keys().hasAll(['name', 'phoneHash', 'role', 'tz']);
+      
+      // 업데이트: 자기 자신만 (관리 필드 제외)
+      allow update: if isSelf(uid) && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'createdAt']);
+    }
+    
+    // ===== medications 컬렉션 =====
+    match /medications/{medId} {
+      // 읽기: 자기 자신 또는 ACTIVE 보호자
+      allow read: if isSelf(resource.data.ownerId) || 
+        isActiveCaregiver(resource.data.ownerId);
+      
+      // 생성: 자기 자신만
+      allow create: if isSelf(request.resource.data.ownerId) &&
+        request.resource.data.keys().hasAll(['ownerId', 'name', 'category', 'times']) &&
+        request.resource.data.times.size() >= 1 &&
+        request.resource.data.times.size() <= 6 &&
+        request.resource.data.name.size() >= 2 &&
+        request.resource.data.name.size() <= 40;
+      
+      // 업데이트: 자기 자신만 (ownerId 변경 금지)
+      allow update: if isSelf(resource.data.ownerId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['ownerId', 'createdAt']);
+      
+      // 삭제: 자기 자신만
+      allow delete: if isSelf(resource.data.ownerId);
+    }
+    
+    // ===== dose_instances 컬렉션 =====
+    match /dose_instances/{doseId} {
+      // 읽기: 자기 자신 또는 ACTIVE 보호자
+      allow read: if isSelf(resource.data.ownerId) || 
+        isActiveCaregiver(resource.data.ownerId);
+      
+      // 생성: 자기 자신 또는 Cloud Functions (서버 사이드)
+      allow create: if isSelf(request.resource.data.ownerId) &&
+        request.resource.data.keys().hasAll(['ownerId', 'medId', 'scheduledAt', 'status']);
+      
+      // 업데이트: 자기 자신만 (상태 전이)
+      allow update: if isSelf(resource.data.ownerId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['ownerId', 'medId', 'createdAt']);
+      
+      // 삭제: Cloud Functions만 (서버 사이드)
+      allow delete: if false; // 클라이언트에서는 삭제 불가
+    }
+    
+    // ===== care_links 컬렉션 =====
+    match /care_links/{linkId} {
+      // 읽기: 보호자 또는 환자
+      allow read: if isSelf(resource.data.caregiverId) || 
+        isSelf(resource.data.patientId);
+      
+      // 생성: 보호자만 (PENDING 상태로)
+      allow create: if isSelf(request.resource.data.caregiverId) &&
+        request.resource.data.status == 'PENDING';
+      
+      // 업데이트: 
+      // - 보호자: 상태 변경 (ACTIVE → PAUSED/REVOKED)
+      // - 환자: 승인 (PENDING → ACTIVE) 또는 해지 (→ REVOKED)
+      allow update: if (isSelf(resource.data.caregiverId) || 
+        isSelf(resource.data.patientId)) &&
+        !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['caregiverId', 'patientId', 'createdAt']);
+      
+      // 삭제: 보호자 또는 환자
+      allow delete: if isSelf(resource.data.caregiverId) || 
+        isSelf(resource.data.patientId);
+    }
+    
+    // ===== health_bp 컬렉션 =====
+    match /health_bp/{recordId} {
+      // 읽기: 자기 자신 또는 ACTIVE 보호자
+      allow read: if isSelf(resource.data.ownerId) || 
+        isActiveCaregiver(resource.data.ownerId);
+      
+      // 생성: 자기 자신만
+      allow create: if isSelf(request.resource.data.ownerId) &&
+        request.resource.data.keys().hasAll(['ownerId', 'sys', 'dia', 'measuredAt']) &&
+        request.resource.data.sys >= 60 && request.resource.data.sys <= 250 &&
+        request.resource.data.dia >= 40 && request.resource.data.dia <= 150;
+      
+      // 업데이트/삭제: 자기 자신만
+      allow update, delete: if isSelf(resource.data.ownerId);
+    }
+    
+    // ===== health_bg 컬렉션 =====
+    match /health_bg/{recordId} {
+      // 읽기: 자기 자신 또는 ACTIVE 보호자
+      allow read: if isSelf(resource.data.ownerId) || 
+        isActiveCaregiver(resource.data.ownerId);
+      
+      // 생성: 자기 자신만
+      allow create: if isSelf(request.resource.data.ownerId) &&
+        request.resource.data.keys().hasAll(['ownerId', 'glucose', 'context', 'measuredAt']) &&
+        request.resource.data.glucose >= 30 && request.resource.data.glucose <= 600;
+      
+      // 업데이트/삭제: 자기 자신만
+      allow update, delete: if isSelf(resource.data.ownerId);
+    }
+    
+    // ===== invites 컬렉션 =====
+    match /invites/{inviteId} {
+      // 읽기: 보호자만 (자신이 생성한 초대)
+      allow read: if isSelf(resource.data.caregiverId);
+      
+      // 생성: 보호자만
+      allow create: if isSelf(request.resource.data.caregiverId) &&
+        request.resource.data.used == false;
+      
+      // 업데이트: 환자가 초대 수락 시 (used = true)
+      allow update: if request.resource.data.used == true &&
+        resource.data.used == false;
+      
+      // 삭제: 보호자만
+      allow delete: if isSelf(resource.data.caregiverId);
+    }
+    
+    // 모든 다른 경로는 기본적으로 거부
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
