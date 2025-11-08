@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { supabase } from '@/services/supabase.client';
 import { useNavigate } from 'react-router-dom';
 
+type UserRole = 'patient' | 'caregiver';
+
 export default function Signup() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [role, setRole] = useState<UserRole>('patient');
   const [pending, setPending] = useState(false);
   const nav = useNavigate();
 
@@ -29,6 +32,9 @@ export default function Signup() {
         password,
         options: {
           emailRedirectTo: window.location.origin,
+          data: {
+            role,
+          },
         },
       });
 
@@ -46,9 +52,35 @@ export default function Signup() {
 
   return (
     <div className="min-h-screen grid place-content-center gap-3 p-6">
-      <h1 className="text-xl font-bold">회원가입</h1>
+      <h1 className="text-xl font-bold text-center">회원가입</h1>
 
       <div className="flex flex-col gap-2 w-72">
+        <label className="text-sm font-medium text-slate-700">역할 선택</label>
+        <div className="flex items-center gap-3 rounded border px-3 py-2">
+          <label className="flex items-center gap-1 text-sm">
+            <input
+              type="radio"
+              name="role"
+              value="patient"
+              checked={role === 'patient'}
+              onChange={() => setRole('patient')}
+              disabled={pending}
+            />
+            복용자
+          </label>
+          <label className="flex items-center gap-1 text-sm">
+            <input
+              type="radio"
+              name="role"
+              value="caregiver"
+              checked={role === 'caregiver'}
+              onChange={() => setRole('caregiver')}
+              disabled={pending}
+            />
+            보호자
+          </label>
+        </div>
+
         <input
           className="border rounded px-3 py-2"
           placeholder="email"
