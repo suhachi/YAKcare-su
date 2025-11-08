@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Badge } from "../ui/badge";
@@ -23,22 +23,31 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
   const [permission, setPermission] = useState<PermissionState>('prompt');
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [scanState, setScanState] = useState<ScanState>('idle');
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     if (open) {
       checkPermission();
       console.log('GA4: qr_open', { mode });
+    } else {
+      stopStream();
     }
   }, [open, mode]);
 
   const checkPermission = async () => {
     try {
-      // TODO: 실제 카메라 권한 체크
-      // const result = await navigator.permissions.query({ name: 'camera' });
-      // setPermission(result.state);
-      
-      // 시뮬레이션
-      setPermission('granted');
+      if (!('permissions' in navigator) || !('mediaDevices' in navigator)) {
+        setPermission('denied');
+        return;
+      }
+
+      const status = await (navigator.permissions as any).query({ name: 'camera' as PermissionName });
+      setPermission(status.state as PermissionState);
+      status.onchange = () => {
+        setPermission(status.state as PermissionState);
+      };
     } catch (error) {
       console.error('Permission check failed', error);
       setPermission('denied');
@@ -47,16 +56,23 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
 
   const requestPermission = async () => {
     try {
-      // TODO: 실제 카메라 스트림 요청
-      // const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      // stream.getTracks().forEach(track => track.stop());
-      
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('이 환경에서는 카메라를 사용할 수 없습니다.');
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+        },
+      });
+      stream.getTracks().forEach(track => track.stop());
       setPermission('granted');
       toast.success('카메라 권한이 허용되었습니다');
     } catch (error) {
       console.log('GA4: qr_permission_denied');
       setPermission('denied');
-      toast.error('카메라 권한이 필요합니다');
+      const message = error instanceof Error ? error.message : '카메라 권한이 필요합니다';
+      toast.error(message);
     }
   };
 
@@ -65,6 +81,54 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
     toast('설정 앱에서 카메라 권한을 변경할 수 있어요');
     // TODO: iOS/Android 설정 앱 딥링크
   };
+
+  const startStream = async () => {
+    if (permission !== 'granted' || !open) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setVideoError('이 환경에서는 카메라를 사용할 수 없습니다.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+      setVideoError(null);
+    } catch (error) {
+      console.error('카메라 스트림 시작 실패', error);
+      const message = error instanceof Error ? error.message : '카메라를 시작할 수 없습니다.';
+      setVideoError(message);
+      toast.error(message);
+    }
+  };
+
+  const stopStream = () => {
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (permission === 'granted' && open) {
+      startStream();
+    }
+    return () => {
+      stopStream();
+    };
+  }, [permission, open]);
 
   const handleFlashToggle = () => {
     setIsFlashOn(!isFlashOn);
@@ -199,18 +263,17 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
       <div className="flex-1 relative flex items-center justify-center">
         {permission === 'granted' ? (
           <>
-            {/* 카메라 프레임 시뮬레이션 */}
-            <div
-              className="absolute inset-0"
-              style={{
-                backgroundColor: '#1a1a1a',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Camera className="w-32 h-32" style={{ color: '#333' }} />
-            </div>
+            <video
+              ref={videoRef}
+              className="absolute inset-0 w-full h-full object-cover"
+              playsInline
+              muted
+            />
+            {videoError && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/70 text-white text-sm px-4 text-center">
+                {videoError}
+              </div>
+            )}
 
             {/* 가이드 박스 */}
             <div
