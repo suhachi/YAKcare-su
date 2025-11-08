@@ -1,0 +1,8 @@
+﻿# Environment files
+.env.local
+.env*.local
+.env
+node_modules/
+build/
+dist/
+test-results/
