@@ -15,11 +15,32 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen grid place-content-center gap-2 p-6">
-      <h1 className="text-xl font-bold">로그인</h1>
-      <input className="border rounded px-3 py-2" placeholder="email" value={email} onChange={e=>setEmail(e.target.value)} />
-      <input className="border rounded px-3 py-2" placeholder="password" type="password" value={pw} onChange={e=>setPw(e.target.value)} />
-      <button onClick={onLogin} className="bg-emerald-600 text-white rounded py-2">로그인</button>
+    <div className="min-h-screen grid place-content-center gap-3 p-6">
+      <h1 className="text-xl font-bold text-center">로그인</h1>
+      <div className="flex flex-col gap-2 w-72">
+        <input
+          className="border rounded px-3 py-2"
+          placeholder="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <input
+          className="border rounded px-3 py-2"
+          placeholder="password"
+          type="password"
+          value={pw}
+          onChange={(e) => setPw(e.target.value)}
+        />
+        <button onClick={onLogin} className="bg-emerald-600 text-white rounded py-2">
+          로그인
+        </button>
+        <button
+          className="text-sm text-emerald-700 underline"
+          onClick={() => nav('/signup')}
+        >
+          계정이 없으신가요? 회원가입
+        </button>
+      </div>
     </div>
   );
 }
