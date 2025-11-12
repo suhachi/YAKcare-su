@@ -4,7 +4,8 @@
  */
 
 import { ACTIVE_FLAGS } from '../config/env';
-import type { CareLink, LinkStatus } from '../types/link';
+import type { CareLink, LinkStatus, LinkInvite, RelationType } from '../types/link';
+import { LINK_LIMITS } from '../types/link';
 
 const DEV_ONLY_MESSAGE = 'Mock 서비스는 개발 모드에서만 사용할 수 있습니다.';
 
@@ -144,13 +145,24 @@ export async function setLinkStatus(linkId: string, status: LinkStatus): Promise
 /**
  * 초대 생성
  */
-export async function createInvite(
-  patientId: string,
-  relation: CareLink['relation']
-): Promise<any> {
-  // Mock 함수 호출 - 필요 시 Supabase/Firestore에도 구현
-  const linkMock = await loadLinkMock();
-  return await linkMock.createInvite(patientId, relation);
+export async function createInvite(caregiverId: string): Promise<LinkInvite> {
+  const inviteCode = generateInviteCode();
+  const expiresAt = Date.now() + LINK_LIMITS.INVITE_EXPIRY_HOURS * 60 * 60 * 1000;
+  const deepLink = buildInviteDeepLink(inviteCode);
+
+  if (ACTIVE_FLAGS.USE_SUPABASE_LINK) {
+    return await createInviteWithSupabase({
+      caregiverId,
+      inviteCode,
+      expiresAt,
+      deepLink,
+    });
+  } else if (ACTIVE_FLAGS.USE_FIRESTORE_LINK) {
+    return await createInviteWithFirestore(caregiverId);
+  } else {
+    const linkMock = await loadLinkMock();
+    return await linkMock.createInvite(caregiverId);
+  }
 }
 
 /**
@@ -158,12 +170,18 @@ export async function createInvite(
  */
 export async function acceptInvite(
   inviteCode: string,
-  caregiverId: string,
+  patientId: string,
+  relation: RelationType = 'GUARDIAN',
   nickname?: string
 ): Promise<CareLink> {
-  // Mock 함수 호출 - 필요 시 Supabase/Firestore에도 구현
-  const linkMock = await loadLinkMock();
-  return await linkMock.acceptInvite(inviteCode, caregiverId, nickname);
+  if (ACTIVE_FLAGS.USE_SUPABASE_LINK) {
+    return await acceptInviteWithSupabase(inviteCode, patientId, relation, nickname);
+  } else if (ACTIVE_FLAGS.USE_FIRESTORE_LINK) {
+    return await acceptInviteWithFirestore(inviteCode, patientId, relation, nickname);
+  } else {
+    const linkMock = await loadLinkMock();
+    return await linkMock.acceptInvite(inviteCode, patientId, relation, nickname);
+  }
 }
 
 /**
@@ -177,6 +195,25 @@ export function generateInviteCode(): string {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
+}
+
+function buildInviteDeepLink(inviteCode: string): string {
+  const base =
+    ((import.meta as any)?.env?.VITE_INVITE_BASE_URL as string | undefined) ||
+    'yakmeal://invite';
+
+  if (base.startsWith('http')) {
+    try {
+      const url = new URL(base);
+      url.searchParams.set('code', inviteCode);
+      return url.toString();
+    } catch {
+      // base가 유효한 URL이 아니라면 fallback
+    }
+  }
+
+  const normalized = base.endsWith('/') ? base.slice(0, -1) : base;
+  return `${normalized}/${inviteCode}`;
 }
 
 // ========== Supabase 구현 ==========
@@ -225,6 +262,27 @@ async function deleteWithSupabase(linkId: string): Promise<void> {
   return await deleteLink(linkId);
 }
 
+async function createInviteWithSupabase(params: {
+  caregiverId: string;
+  inviteCode: string;
+  expiresAt: number;
+  deepLink: string;
+  relation?: RelationType;
+}): Promise<LinkInvite> {
+  const { createLinkInvite } = await import('./supabase/links.dao');
+  return await createLinkInvite(params);
+}
+
+async function acceptInviteWithSupabase(
+  inviteCode: string,
+  patientId: string,
+  relation: RelationType,
+  nickname?: string
+): Promise<CareLink> {
+  const { acceptInviteByCode } = await import('./supabase/links.dao');
+  return await acceptInviteByCode(inviteCode, patientId, relation, nickname);
+}
+
 // ========== Firestore 구현 ==========
 
 async function createWithFirestore(
@@ -268,6 +326,19 @@ async function updateWithFirestore(
 
 async function deleteWithFirestore(linkId: string): Promise<void> {
   // TODO: Firestore DAO 구현 필요
+  throw new Error('Firestore not implemented yet');
+}
+
+async function createInviteWithFirestore(_caregiverId: string): Promise<LinkInvite> {
+  throw new Error('Firestore not implemented yet');
+}
+
+async function acceptInviteWithFirestore(
+  _inviteCode: string,
+  _patientId: string,
+  _relation: RelationType,
+  _nickname?: string
+): Promise<CareLink> {
   throw new Error('Firestore not implemented yet');
 }
 

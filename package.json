@@ -33,6 +33,8 @@
             "@radix-ui/react-tooltip": "*",
             "@supabase/supabase-js": "*",
             "@vitejs/plugin-react": "*",
+            "@zxing/browser": "^0.1.5",
+            "@zxing/library": "^0.21.3",
             "class-variance-authority": "*",
             "clsx": "*",
             "cmdk": "*",

@@ -5,6 +5,8 @@ import { Badge } from "../ui/badge";
 import { X, Zap, Image as ImageIcon, AlertTriangle, Camera, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { mapScanToDraft, getScanResultMessage, type ScanPayload, type MappingResult } from "../../services/intake.mapper";
+import { BrowserMultiFormatReader } from "@zxing/browser";
+import { NotFoundException } from "@zxing/library";
 
 type PermissionState = 'prompt' | 'granted' | 'denied';
 type ScanMode = 'qr' | 'ocr';
@@ -26,6 +28,7 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
   const [videoError, setVideoError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const qrReaderRef = useRef<BrowserMultiFormatReader | null>(null);
   const platformGuide = useMemo(() => {
     if (typeof window === 'undefined') {
       return '브라우저 설정에서 카메라 권한을 허용해 주세요.';
@@ -101,6 +104,17 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
     }
   };
 
+  const stopQrReader = () => {
+    if (qrReaderRef.current) {
+      try {
+        qrReaderRef.current.reset();
+      } catch (error) {
+        console.warn('QR 리더 초기화 실패', error);
+      }
+    }
+    qrReaderRef.current = null;
+  };
+
   const startStream = async () => {
     if (permission !== 'granted' || !open) return;
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -132,6 +146,7 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
   };
 
   const stopStream = () => {
+    stopQrReader();
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
@@ -150,6 +165,45 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
     };
   }, [permission, open]);
 
+  const processScanPayload = (payload: ScanPayload, scanMode: ScanMode) => {
+    setScanState('processing');
+    try {
+      const result = mapScanToDraft(payload, userId);
+      console.log('GA4: scan_result', {
+        mode: scanMode,
+        confidence: result.confidence,
+        missingFields: result.missingFields,
+      });
+
+      const message = getScanResultMessage(result);
+      if (message) {
+        toast(message);
+      }
+
+      if (result.confidence === 'full') {
+        setScanState('success');
+        toast.success('스캔 결과가 적용되었어요');
+      } else if (result.confidence === 'partial') {
+        setScanState('partial');
+        toast('일부만 인식되어 확인이 필요해요', { icon: '⚠️' });
+        onError?.('일부 항목만 인식되었습니다. 누락된 정보를 확인해 주세요.');
+      } else {
+        setScanState('failed');
+        toast.error('스캔 정보를 불러오지 못했어요');
+        onError?.('스캔을 다시 시도하거나 수기 입력을 이용해 주세요.');
+      }
+
+      setTimeout(() => {
+        onSuccess(result, scanMode);
+      }, 600);
+    } catch (error) {
+      console.error('[QRScanner] 스캔 결과 처리 실패', error);
+      toast.error('스캔 결과를 처리하지 못했습니다.');
+      setScanState('failed');
+      onError?.('스캔 결과 처리 중 오류가 발생했습니다.');
+    }
+  };
+
   const handleFlashToggle = () => {
     setIsFlashOn(!isFlashOn);
     // TODO: 실제 플래시 토글
@@ -162,14 +216,12 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
 
   const simulateScan = () => {
     setScanState('scanning');
-    
+
     // 시뮬레이션: 2초 후 성공/실패
     setTimeout(() => {
       const rand = Math.random();
       let payload: ScanPayload;
-      
-      setScanState('processing');
-      
+
       // 시뮬레이션 시나리오 (Step 4.5.B 테스트 픽스처)
       if (rand < 0.6) {
         // 60%: 완전 성공 (T1, T2, T4)
@@ -179,7 +231,7 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
           '소화제\n1일 3회 식전\n5일분',
         ];
         const rawText = scenarios[Math.floor(Math.random() * scenarios.length)];
-        
+
         payload = {
           source: mode,
           rawText,
@@ -198,42 +250,81 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
           rawText: '알 수 없는 텍스트',
         };
       }
-      
-      // 매퍼 실행
-      const result = mapScanToDraft(payload, userId);
-      console.log('GA4: scan_result', {
-        mode,
-        confidence: result.confidence,
-        missingFields: result.missingFields,
-      });
-      
-      // 상태 업데이트
-      if (result.confidence === 'full') {
-        setScanState('success');
-        toast.success('스캔 결과가 적용되었어요');
-      } else if (result.confidence === 'partial') {
-        setScanState('partial');
-        toast('일부만 인식되어 확인이 필요해요', { icon: '⚠️' });
-        onError?.('일부 항목만 인식되었습니다. 누락된 정보를 확인해 주세요.');
-      } else {
-        setScanState('failed');
-        toast.error('스캔 정보를 불러오지 못했어요');
-        onError?.('스캔을 다시 시도하거나 수기 입력을 이용해 주세요.');
-      }
-      
-      // 1초 후 결과 전달
-      setTimeout(() => {
-        onSuccess(result, mode);
-      }, 1000);
+
+      processScanPayload(payload, mode);
     }, 2000);
   };
+
+  const startQrDecode = async () => {
+    if (!videoRef.current) {
+      toast.error('카메라 준비 중입니다. 잠시 후 다시 시도해 주세요.');
+      onError?.('카메라가 준비되지 않았습니다.');
+      return;
+    }
+    if (scanState === 'scanning' || scanState === 'processing') {
+      return;
+    }
+
+    setScanState('scanning');
+    stopQrReader();
+
+    const reader = new BrowserMultiFormatReader();
+    qrReaderRef.current = reader;
+
+    try {
+      const result = await reader.decodeOnceFromVideoElement(videoRef.current);
+      if (!result) {
+        throw new NotFoundException('QR 코드를 인식하지 못했습니다.');
+      }
+      const text = result.getText();
+      const payload: ScanPayload = {
+        source: 'qr',
+        rawText: text,
+        url: text.startsWith('http') ? text : undefined,
+      };
+      processScanPayload(payload, 'qr');
+    } catch (error) {
+      if (error instanceof NotFoundException || (error as Error)?.name === 'NotFoundException') {
+        toast.error('QR 코드를 인식하지 못했습니다. 화면 중앙에 맞춰 다시 시도해 주세요.');
+        onError?.('QR 코드를 인식하지 못했습니다. 다시 시도해 주세요.');
+      } else {
+        console.error('QR 스캔 실패', error);
+        toast.error('QR 코드를 읽는 중 오류가 발생했습니다.');
+        onError?.('QR 코드를 읽는 중 오류가 발생했습니다.');
+      }
+      setScanState('failed');
+    } finally {
+      stopQrReader();
+    }
+  };
   
-  const handleRetry = () => {
-    setScanState('idle');
+  const handleScanButton = () => {
+    if (permission !== 'granted' || scanState === 'scanning' || scanState === 'processing') {
+      return;
+    }
+
+    if (scanState === 'failed') {
+      stopQrReader();
+      setScanState('idle');
+      if (mode === 'qr') {
+        startQrDecode();
+      } else {
+        simulateScan();
+      }
+      return;
+    }
+
+    if (mode === 'qr') {
+      startQrDecode();
+    } else {
+      simulateScan();
+    }
   };
   
   const handleManualEntry = () => {
     console.log('GA4: scan_manual_fallback');
+    stopQrReader();
+    setScanState('idle');
     // 빈 결과로 수기 입력 모드 전환
     const emptyResult: MappingResult = {
       draft: { userId, source: mode },
@@ -514,7 +605,7 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
 
           {/* 촬영/스캔 버튼 */}
           <button
-            onClick={scanState === 'failed' ? handleRetry : simulateScan}
+            onClick={handleScanButton}
             disabled={permission !== 'granted' || scanState === 'scanning' || scanState === 'processing'}
             className="flex flex-col items-center gap-2 transition-all active:scale-95"
             style={{
