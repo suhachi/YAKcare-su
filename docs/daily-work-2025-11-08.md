@@ -7,6 +7,7 @@
 - Vercel 배포 실패 원인(출력 디렉터리 불일치)을 해결하고 배포 성공.
 - 회원 역할 선택, 카메라 권한/미리보기 등 실사용 플로우를 보완.
 - 프로젝트 정밀 진단 보고서 작성 및 향후 개발 계획 수립.
+- Phase 3 1차 구현: QR 디코딩 실장, Supabase 기반 CareLinks 초대/연결, RLS 정책 스크립트 준비.
 
 ### 2. 상세 작업 내용
 1. **빌드/배포 환경 정리**
@@ -29,6 +30,12 @@
    - `docs/project-readiness-report.md` 작성: 현재 완성도, 기능별 상태, Phase별 로드맵, Supabase 점검 이슈 등 정리.
    - 본 `docs/daily-work-2025-11-08.md` 에서 하루 작업 내용을 기록.
 
+5. **Phase 3 기능 확장**
+   - `@zxing/browser`, `@zxing/library`를 도입하고 `QRScanner`에 실제 QR 디코딩 로직을 적용.
+   - 스캔 실패/부분 인식 Fallback UX, 플랫폼별 권한 안내, 재시도 흐름 강화.
+   - `links.service`와 `supabase/links.dao`를 확장해 초대 생성/수락을 Supabase 테이블 (`care_link_invites`, `care_links`)에서 처리.
+   - `supabase/policies/care_links_policies.sql` 추가: 초대 테이블 생성, RLS/트리거 정책 정의.
+
 ### 3. 테스트/검증 현황
 - `pnpm build`: 경고(청크 사이즈) 외 에러 없음.
 - Vercel 최신 배포에서 `/login`, `/signup`, 카메라 권한 요청 확인.
@@ -36,14 +43,15 @@
 - 자동화 테스트(Playwright smoke)는 로그인 플로우 미구현 상태(차후 도입 예정).
 
 ### 4. 미해결/다음 일정
-- QR/OCR 실데이터 디코딩 로직은 아직 목업 → Phase 3에서 라이브러리 연동 예정.
-- Supabase 보호자-복용자 연동, CareLinks 실데이터 구현 필요.
-- Playwright 테스트 확장, chunk size 최적화 등 Phase 5 이후 과제로 유지.
-- 이메일/SMS 전송 안정화를 위해 SMTP 커스텀 설정 검토.
+- OCR(처방전 촬영) 인식 경로 고도화 및 수기 입력 UX 강화.
+- Supabase SMTP 커스텀 설정, 이메일 알림 동작 검증.
+- Playwright E2E 확장(회원가입/로그인/연결 플로우), 번들 사이즈 최적화, PWA 설정(Phase 4~5).
+- CareLinks 초대 딥링크/QR 이미지 생성, 보호자 대시보드 실데이터 표현.
 
 ### 5. 내일 테스트 계획
-- Vercel 배포본에서 회원가입(복용자/보호자) → 이메일 인증 → 로그인 → 홈 화면 접근 플로우 재검증.
-- 카메라 권한 허용/거부 시나리오, 권한 거부 후 재요청 동작 확인.
-- Supabase 대시보드에서 `user_metadata.role` 저장 여부 및 데이터 정합성 점검.
+- Vercel 배포본에서 회원가입(복용자/보호자) → 이메일 인증 → 로그인 → CareLinks 목록 확인 플로우 재검증.
+- QR 스캔: 권한 허용/거부, 실제 QR(텍스트 URL) 인식 성공/실패 시나리오 점검.
+- Supabase `care_link_invites`, `care_links` 테이블 데이터/정책(RLS) 검증 및 초대 수락 흐름 테스트.
+- Supabase 대시보드에서 `user_metadata.role`, 초대 만료/해지 로직 이상 여부 점검.
 
 
