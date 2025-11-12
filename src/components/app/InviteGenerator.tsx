@@ -3,15 +3,16 @@
  * Step 4.6: 연결/온보딩
  */
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { toast } from 'sonner';
-import { QrCode, Link2, Hash, Copy, Check } from 'lucide-react';
+import { QrCode, Link2, Hash, Copy, Check, Download } from 'lucide-react';
 import { createInvite } from '../../services/links.service';
 import { LinkInvite } from '../../types/link';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface InviteGeneratorProps {
   caregiverId: string;
@@ -21,6 +22,7 @@ export function InviteGenerator({ caregiverId }: InviteGeneratorProps) {
   const [invite, setInvite] = useState<LinkInvite | null>(null);
   const [loading, setLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<'code' | 'link' | null>(null);
+  const qrCodeContainerRef = useRef<HTMLDivElement>(null);
 
   // 초대 생성
   const handleGenerateInvite = async () => {
@@ -105,18 +107,97 @@ export function InviteGenerator({ caregiverId }: InviteGeneratorProps) {
               {/* QR 코드 탭 */}
               <TabsContent value="qr" className="space-y-4">
                 <div
-                  className="flex items-center justify-center rounded-lg border-2 border-dashed p-8"
+                  className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-8"
                   style={{ borderColor: 'var(--brand-border)', minHeight: '200px' }}
                 >
-                  <div className="text-center space-y-2">
-                    <QrCode
-                      className="w-32 h-32 mx-auto"
-                      style={{ color: 'var(--brand-text-muted)' }}
+                  <div className="bg-white p-4 rounded-lg mb-4" ref={qrCodeContainerRef}>
+                    <QRCodeSVG
+                      value={invite.deepLink}
+                      size={200}
+                      level="H"
+                      includeMargin={true}
                     />
+                  </div>
+                  <div className="text-center space-y-2">
                     <p style={{ fontSize: '0.875rem', color: 'var(--brand-text-secondary)' }}>
-                      QR 코드 생성은 준비 중입니다
+                      초대 코드: <strong>{invite.inviteCode}</strong>
+                    </p>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--brand-text-muted)' }}>
+                      {getExpiryText()}
                     </p>
                   </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => handleCopy(invite.deepLink, 'link')}
+                    variant="outline"
+                    style={{ flex: 1, minHeight: '48px' }}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    링크 복사
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      // QR 코드 이미지 다운로드
+                      const container = qrCodeContainerRef.current;
+                      if (!container) {
+                        toast.error('QR 코드를 찾을 수 없습니다');
+                        return;
+                      }
+
+                      const svg = container.querySelector('svg');
+                      if (!svg) {
+                        toast.error('QR 코드 SVG를 찾을 수 없습니다');
+                        return;
+                      }
+
+                      try {
+                        const svgData = new XMLSerializer().serializeToString(svg);
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) {
+                          toast.error('Canvas를 지원하지 않는 브라우저입니다');
+                          return;
+                        }
+
+                        const img = new Image();
+                        img.onload = () => {
+                          canvas.width = img.width;
+                          canvas.height = img.height;
+                          ctx.drawImage(img, 0, 0);
+                          canvas.toBlob((blob) => {
+                            if (blob) {
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `yakcare-invite-${invite.inviteCode}.png`;
+                              document.body.appendChild(a);
+                              a.click();
+                              document.body.removeChild(a);
+                              URL.revokeObjectURL(url);
+                              toast.success('QR 코드가 다운로드되었습니다');
+                            } else {
+                              toast.error('이미지 변환에 실패했습니다');
+                            }
+                          }, 'image/png');
+                        };
+                        img.onerror = () => {
+                          toast.error('이미지 로드에 실패했습니다');
+                        };
+                        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+                        const url = URL.createObjectURL(svgBlob);
+                        img.src = url;
+                      } catch (error) {
+                        console.error('QR 코드 다운로드 오류:', error);
+                        toast.error('QR 코드 다운로드 중 오류가 발생했습니다');
+                      }
+                    }}
+                    variant="outline"
+                    style={{ flex: 1, minHeight: '48px' }}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    다운로드
+                  </Button>
                 </div>
                 <p style={{ fontSize: '0.875rem', color: 'var(--brand-text-muted)' }}>
                   복용자가 QR 코드를 스캔하여 바로 연결할 수 있습니다

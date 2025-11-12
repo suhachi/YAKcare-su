@@ -11,6 +11,8 @@ import type { SourceType, MedCategory } from "../../types/meds";
 import { listPatientCardsAll, summarizeCardToday } from "../../services/medications.service";
 import { subscribeDoseChange } from "../../services/doses.service";
 import { CATEGORY_LABELS } from "../../types/meds";
+import { getRecordsByDateRange } from "../../services/health.service";
+import { getBPStatus, getBGStatus, HEALTH_TAG_LABELS, BG_MEASUREMENT_LABELS } from "../../types/health";
 
 // CardSummary 타입 정의
 export interface CardSummary {
@@ -54,6 +56,25 @@ export function CaregiverFeed({
   // 카드 데이터
   const [cardSummaries, setCardSummaries] = useState<CardSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // 건강 기록 데이터
+  const [allBpRecords, setAllBpRecords] = useState<Array<{
+    id: string;
+    date: string;
+    time: string;
+    systolic: number;
+    diastolic: number;
+    status: 'normal' | 'warning' | 'danger';
+  }>>([]);
+  const [allBgRecords, setAllBgRecords] = useState<Array<{
+    id: string;
+    date: string;
+    time: string;
+    value: number;
+    tag: string;
+    status: 'normal' | 'warning' | 'danger';
+  }>>([]);
+  const [isLoadingHealth, setIsLoadingHealth] = useState(true);
 
   // 필터 상태
   const [filterCategory, setFilterCategory] = useState<FilterCategory>('ALL');
@@ -119,86 +140,99 @@ export function CaregiverFeed({
     return () => clearInterval(interval);
   }, []);
 
-  // 6개월치 혈압/혈당 기록 생성 (최신순)
-  const allBpRecords = useMemo(() => {
-    const records = [];
-    const today = new Date('2025-10-22');
-    const sixMonthsAgo = new Date(today);
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  // 건강 기록 로드
+  const loadHealthRecords = async () => {
+    setIsLoadingHealth(true);
+    try {
+      const today = new Date();
+      const sixMonthsAgo = new Date(today);
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+      
+      const startTime = sixMonthsAgo.getTime();
+      const endTime = today.getTime();
 
-    let id = 1;
-    for (let d = new Date(sixMonthsAgo); d <= today; d.setDate(d.getDate() + 1)) {
-      // 하루 1회 기록 (80% 확률)
-      if (Math.random() > 0.2) {
-        const hour = Math.floor(Math.random() * 3) + 7; // 7-9시
-        const minute = Math.floor(Math.random() * 60);
-        const systolic = Math.floor(Math.random() * 30) + 115; // 115-145
-        const diastolic = Math.floor(Math.random() * 20) + 75; // 75-95
-        
-        let status: 'normal' | 'warning' | 'danger' = 'normal';
-        if (systolic >= 140 || diastolic >= 90) status = 'danger';
-        else if (systolic >= 130 || diastolic >= 85) status = 'warning';
+      // 혈압 기록 로드
+      const bpRecords = await getRecordsByDateRange(patientId, startTime, endTime, 'BP');
+      const bpFormatted = bpRecords
+        .filter(r => r.systolic && r.diastolic)
+        .map(r => {
+          const date = new Date(r.time);
+          const hour = date.getHours();
+          const minute = date.getMinutes();
+          const bpStatus = getBPStatus(r.systolic!, r.diastolic!);
+          
+          let status: 'normal' | 'warning' | 'danger' = 'normal';
+          if (bpStatus === 'VERY_HIGH' || bpStatus === 'HIGH') status = 'danger';
+          else if (bpStatus === 'ELEVATED') status = 'warning';
 
-        records.push({
-          id: `bp${id++}`,
-          date: new Date(d).toISOString().split('T')[0],
-          time: `${hour < 12 ? '오전' : '오후'} ${hour % 12 || 12}:${String(minute).padStart(2, '0')}`,
-          systolic,
-          diastolic,
-          status,
-        });
-      }
+          return {
+            id: r.id,
+            date: date.toISOString().split('T')[0],
+            time: `${hour < 12 ? '오전' : '오후'} ${hour % 12 || 12}:${String(minute).padStart(2, '0')}`,
+            systolic: r.systolic!,
+            diastolic: r.diastolic!,
+            status,
+          };
+        })
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      // 혈당 기록 로드
+      const bgRecords = await getRecordsByDateRange(patientId, startTime, endTime, 'BG');
+      const bgFormatted = bgRecords
+        .filter(r => r.glucose)
+        .map(r => {
+          const date = new Date(r.time);
+          const hour = date.getHours();
+          const minute = date.getMinutes();
+          const isFasting = r.measurementType === 'FASTING';
+          const bgStatus = getBGStatus(r.glucose!, isFasting);
+          
+          let status: 'normal' | 'warning' | 'danger' = 'normal';
+          if (bgStatus === 'HIGH') status = 'danger';
+          else if (bgStatus === 'ELEVATED') status = 'warning';
+
+          const tagLabel = HEALTH_TAG_LABELS[r.tag] || '기타';
+          const measurementLabel = r.measurementType ? BG_MEASUREMENT_LABELS[r.measurementType] : '';
+          const tag = measurementLabel ? `${tagLabel} ${measurementLabel}` : tagLabel;
+
+          return {
+            id: r.id,
+            date: date.toISOString().split('T')[0],
+            time: `${hour < 12 ? '오전' : '오후'} ${hour % 12 || 12}:${String(minute).padStart(2, '0')}`,
+            value: r.glucose!,
+            tag,
+            status,
+          };
+        })
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      setAllBpRecords(bpFormatted);
+      setAllBgRecords(bgFormatted);
+    } catch (error) {
+      console.error('Failed to load health records:', error);
+      toast.error('건강 기록을 불러오지 못했습니다');
+      // 에러 발생 시 빈 배열로 설정
+      setAllBpRecords([]);
+      setAllBgRecords([]);
+    } finally {
+      setIsLoadingHealth(false);
     }
-    
-    // 최신순으로 정렬
-    return records.reverse();
-  }, []);
+  };
 
-  const allBgRecords = useMemo(() => {
-    const records = [];
-    const today = new Date('2025-10-22');
-    const sixMonthsAgo = new Date(today);
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-    const tags = ['아침 공복', '저녁 식후2h', '점심 식후2h'];
-    
-    let id = 1;
-    for (let d = new Date(sixMonthsAgo); d <= today; d.setDate(d.getDate() + 1)) {
-      // 하루 1회 기록 (80% 확률)
-      if (Math.random() > 0.2) {
-        const tag = tags[Math.floor(Math.random() * tags.length)];
-        const hour = tag.includes('아침') ? Math.floor(Math.random() * 2) + 7 : Math.floor(Math.random() * 2) + 20;
-        const minute = Math.floor(Math.random() * 60);
-        const value = Math.floor(Math.random() * 50) + 90; // 90-140
-        
-        let status: 'normal' | 'warning' | 'danger' = 'normal';
-        if (value >= 126) status = 'danger';
-        else if (value >= 110) status = 'warning';
-
-        records.push({
-          id: `bg${id++}`,
-          date: new Date(d).toISOString().split('T')[0],
-          time: `${hour < 12 ? '오전' : '오후'} ${hour % 12 || 12}:${String(minute).padStart(2, '0')}`,
-          value,
-          tag,
-          status,
-        });
-      }
-    }
-    
-    // 최신순으로 정렬
-    return records.reverse();
-  }, []);
+  // 건강 기록 초기 로드
+  useEffect(() => {
+    loadHealthRecords();
+  }, [patientId]);
 
   // 최근 14일 데이터만 필터링
   const recent14Days = useMemo(() => {
-    const today = new Date('2025-10-22');
+    const today = new Date();
     const fourteenDaysAgo = new Date(today);
     fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
     
     return {
-      bp: allBpRecords.filter(r => new Date(r.date) > fourteenDaysAgo),
-      bg: allBgRecords.filter(r => new Date(r.date) > fourteenDaysAgo),
+      bp: allBpRecords.filter(r => new Date(r.date) >= fourteenDaysAgo),
+      bg: allBgRecords.filter(r => new Date(r.date) >= fourteenDaysAgo),
     };
   }, [allBpRecords, allBgRecords]);
 
