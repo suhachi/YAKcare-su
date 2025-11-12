@@ -1,18 +1,28 @@
 import { useState, useEffect } from 'react';
 import AppHeader from './AppHeader';
 import AppMain from '../../AppMain';
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 
 type MainSubView = 'home' | 'onboarding' | 'carelinks' | 'settings' | 'about' | 'invite';
 
-export default function AppShell() {
+function AppShellInner() {
   const [mainSubView, setMainSubView] = useState<MainSubView>('home');
   const [activeTab, setActiveTab] = useState<'patient' | 'caregiver'>('patient');
+  const { role } = useAuth();
 
   useEffect(() => {
     if (!import.meta.env.DEV && activeTab !== 'patient') {
       setActiveTab('patient');
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (role === 'caregiver' && import.meta.env.DEV) {
+      setActiveTab('caregiver');
+    } else if (role === 'patient') {
+      setActiveTab('patient');
+    }
+  }, [role]);
 
   // 스케줄러 워커 시작 (개발용)
   useEffect(() => {
@@ -60,7 +70,7 @@ export default function AppShell() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader 
+      <AppHeader
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         mainSubView={mainSubView}
@@ -75,5 +85,13 @@ export default function AppShell() {
         />
       </main>
     </div>
+  );
+}
+
+export default function AppShell() {
+  return (
+    <AuthProvider>
+      <AppShellInner />
+    </AuthProvider>
   );
 }

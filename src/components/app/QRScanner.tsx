@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Button } from "../ui/button";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Badge } from "../ui/badge";
@@ -26,6 +26,19 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
   const [videoError, setVideoError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const platformGuide = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return '브라우저 설정에서 카메라 권한을 허용해 주세요.';
+    }
+    const ua = window.navigator.userAgent.toLowerCase();
+    if (/iphone|ipad|ipod/.test(ua)) {
+      return '설정 > Safari > 카메라 → 허용';
+    }
+    if (/android/.test(ua)) {
+      return '설정 > 앱 > (사용 중인 브라우저) > 권한 > 카메라 허용';
+    }
+    return '브라우저 설정에서 카메라 권한을 허용해 주세요.';
+  }, []);
 
   useEffect(() => {
     if (open) {
@@ -79,7 +92,13 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
   const openSettings = () => {
     console.log('GA4: settings_open_permissions');
     toast('설정 앱에서 카메라 권한을 변경할 수 있어요');
-    // TODO: iOS/Android 설정 앱 딥링크
+    try {
+      if (typeof window !== 'undefined') {
+        window.open('app-settings:', '_blank');
+      }
+    } catch (error) {
+      console.warn('설정 앱을 열 수 없습니다.', error);
+    }
   };
 
   const startStream = async () => {
@@ -108,6 +127,7 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
       const message = error instanceof Error ? error.message : '카메라를 시작할 수 없습니다.';
       setVideoError(message);
       toast.error(message);
+      onError?.(message);
     }
   };
 
@@ -194,9 +214,11 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
       } else if (result.confidence === 'partial') {
         setScanState('partial');
         toast('일부만 인식되어 확인이 필요해요', { icon: '⚠️' });
+        onError?.('일부 항목만 인식되었습니다. 누락된 정보를 확인해 주세요.');
       } else {
         setScanState('failed');
         toast.error('스캔 정보를 불러오지 못했어요');
+        onError?.('스캔을 다시 시도하거나 수기 입력을 이용해 주세요.');
       }
       
       // 1초 후 결과 전달
@@ -370,8 +392,11 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
             <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '12px' }}>
               카메라 권한이 필요합니다
             </h2>
-            <p style={{ fontSize: '1rem', color: 'rgba(255,255,255,0.7)', marginBottom: '24px' }}>
+            <p style={{ fontSize: '1rem', color: 'rgba(255,255,255,0.7)', marginBottom: '12px' }}>
               {mode === 'qr' ? 'QR 코드를 스캔하려면' : '처방전을 촬영하려면'} 카메라 접근 권한을 허용해 주세요
+            </p>
+            <p style={{ fontSize: '0.875rem', color: 'rgba(255,255,255,0.6)', marginBottom: '24px' }}>
+              {platformGuide}
             </p>
             <Button
               onClick={requestPermission}
@@ -391,8 +416,11 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
             <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '12px' }}>
               카메라를 사용할 수 없습니다
             </h2>
-            <p style={{ fontSize: '1rem', color: 'rgba(255,255,255,0.7)', marginBottom: '24px' }}>
+            <p style={{ fontSize: '1rem', color: 'rgba(255,255,255,0.7)', marginBottom: '12px' }}>
               설정에서 카메라 권한을 허용해 주세요
+            </p>
+            <p style={{ fontSize: '0.875rem', color: 'rgba(255,255,255,0.6)', marginBottom: '24px' }}>
+              {platformGuide}
             </p>
             <Button
               onClick={openSettings}
@@ -548,18 +576,30 @@ export function QRScanner({ open, onClose, onSuccess, onError, mode = 'qr', user
 
         {/* 수기 전환 버튼 (Step 4.5.A: 스캔 실패 시) */}
         {scanState === 'failed' && (
-          <Button
-            onClick={handleManualEntry}
-            className="w-full gap-2 mb-3"
-            style={{
-              minHeight: '56px',
-              fontSize: '1.125rem',
-              backgroundColor: 'var(--brand-warn)',
-              color: 'white',
-            }}
-          >
-            수기로 입력하기
-          </Button>
+          <div className="space-y-3 mb-3">
+            <div className="text-sm text-amber-100 bg-amber-500/20 border border-amber-400 rounded px-3 py-2">
+              스캔 결과를 찾지 못했어요. 약봉지를 다시 비춰보거나 조명을 조정해 주세요.
+              계속 실패한다면 아래 버튼으로 수기 입력을 진행할 수 있습니다.
+            </div>
+            <Button
+              onClick={handleManualEntry}
+              className="w-full gap-2"
+              style={{
+                minHeight: '56px',
+                fontSize: '1.125rem',
+                backgroundColor: 'var(--brand-warn)',
+                color: 'white',
+              }}
+            >
+              수기로 입력하기
+            </Button>
+          </div>
+        )}
+
+        {scanState === 'partial' && (
+          <div className="text-sm text-amber-100 bg-amber-500/20 border border-amber-400 rounded px-3 py-2 mb-3">
+            일부 항목이 인식되지 않았습니다. 결과를 확인한 뒤 누락된 정보를 직접 입력해 주세요.
+          </div>
         )}
 
         {/* 닫기 버튼 */}

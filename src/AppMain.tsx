@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
 import { Toaster } from "./components/ui/sonner";
 import { HomeToday } from "./components/app/HomeToday";
 import { CareLinks } from "./components/app/CareLinks";
 import { SettingsPatient } from "./components/app/SettingsPatient";
-import { supabase } from "@/services/supabase.client";
+import { useAuth } from "@/contexts/AuthContext";
 
 type MainSubView = 'home' | 'onboarding' | 'carelinks' | 'settings' | 'about' | 'invite';
 
@@ -18,50 +17,14 @@ export default function AppMain({
   setMainSubView,
   activeTab,
 }: AppMainProps) {
-  const [userId, setUserId] = useState<string | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (error) {
-          console.error("[AppMain] getUser error:", error);
-        }
-        if (!alive) return;
-        setUserId(data?.user?.id ?? null);
-      } catch (error) {
-        console.error("[AppMain] Failed to fetch user:", error);
-        if (!alive) return;
-        setUserId(null);
-      } finally {
-        if (alive) {
-          setAuthLoading(false);
-        }
-      }
-    })();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!alive) return;
-      setUserId(session?.user?.id ?? null);
-    });
-
-    return () => {
-      alive = false;
-      subscription.unsubscribe();
-    };
-  }, []);
+  const { userId, loading } = useAuth();
 
   return (
     <>
       {/* 하위 뷰들 */}
       {mainSubView === 'carelinks' && (
         <>
-          {authLoading ? (
+          {loading ? (
             <div className="p-4 text-sm text-gray-500">사용자 확인 중...</div>
           ) : userId ? (
             <CareLinks
